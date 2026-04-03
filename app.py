@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -19,6 +20,125 @@ REQUIRED_FILES = [
 ]
 
 
+@dataclass
+class DemoBundle:
+    defaults: dict[str, Any]
+    dropdown_options: dict[str, list[str]]
+
+
+class DemoExplainer:
+    def __init__(self) -> None:
+        now = datetime.now().replace(minute=0, second=0, microsecond=0)
+        self.bundle = DemoBundle(
+            defaults={
+                "trans_date_trans_time": now,
+                "dob": pd.Timestamp("1994-01-01"),
+                "amt": 120.0,
+                "merchant": "fraud_Kilback LLC",
+                "category": "shopping_net",
+                "gender": "F",
+                "job": "Sales",
+                "city": "New York",
+                "state": "NY",
+                "zip": 10001,
+                "lat": 40.7128,
+                "long": -74.0060,
+                "city_pop": 8804190,
+                "merch_lat": 40.7306,
+                "merch_long": -73.9352,
+            },
+            dropdown_options={
+                "category": [
+                    "gas_transport",
+                    "grocery_pos",
+                    "grocery_net",
+                    "shopping_pos",
+                    "shopping_net",
+                    "misc_net",
+                    "food_dining",
+                    "entertainment",
+                    "travel",
+                    "health_fitness",
+                ],
+                "merchant": [
+                    "fraud_Kilback LLC",
+                    "Amazon",
+                    "Walmart",
+                    "Target",
+                    "Shell",
+                    "Uber",
+                    "Best Buy",
+                    "Netflix",
+                    "Delta",
+                    "Apple Store",
+                ],
+            },
+        )
+
+    def predict_transaction(self, payload: dict[str, Any]) -> dict[str, Any]:
+        amount = float(payload["amt"])
+        category = str(payload["category"]).lower()
+        merchant = str(payload["merchant"]).lower()
+        hour = pd.to_datetime(payload["trans_date_trans_time"]).hour
+
+        score = 0.08
+        reasons: list[str] = []
+
+        if amount > 5000:
+            score += 0.45
+            reasons.append("Transaction amount is much higher than typical card activity")
+        elif amount > 1000:
+            score += 0.25
+            reasons.append("Transaction amount is higher than usual")
+        elif amount > 300:
+            score += 0.12
+            reasons.append("Transaction amount is moderately elevated")
+
+        if category in {"gas_transport", "shopping_net", "misc_net"}:
+            score += 0.18
+            reasons.append("Category has historically shown elevated risk")
+
+        if "fraud" in merchant:
+            score += 0.35
+            reasons.append("Merchant name appears suspicious")
+
+        if 0 <= hour <= 4:
+            score += 0.12
+            reasons.append("Transaction timing is unusual")
+
+        probability = min(max(score, 0.01), 0.99)
+
+        if probability < 0.3:
+            risk_level = "Low"
+        elif probability < 0.7:
+            risk_level = "Medium"
+        else:
+            risk_level = "High"
+
+        if not reasons:
+            reasons.append("Transaction pattern appears closer to normal historical behavior")
+
+        prediction = 1 if probability >= 0.5 else 0
+        confidence = probability if prediction == 1 else 1 - probability
+
+        return {
+            "prediction": prediction,
+            "prediction_label": "fraudulent" if prediction == 1 else "legitimate",
+            "risk_level": risk_level,
+            "risk_title": f"{risk_level} Risk Transaction",
+            "confidence": confidence,
+            "fraud_probability": probability,
+            "actual_label": None,
+            "actual_label_text": None,
+            "error_type": None,
+            "top_features": [],
+            "top_feature_details": [],
+            "explanation": f"This transaction is considered {risk_level.lower()} risk based on simplified fallback rules.",
+            "explanation_points": reasons[:4],
+            "raw_features": payload,
+        }
+
+
 st.set_page_config(
     page_title="Explainable Credit Card Fraud Detection",
     layout="wide",
@@ -36,18 +156,15 @@ def _missing_required_files() -> list[Path]:
     return [path for path in REQUIRED_FILES if not path.exists()]
 
 
-def _render_setup_message(missing_files: list[Path], error_text: str | None = None) -> None:
-    st.title("Transaction Risk Analysis System")
-    st.error("The app is missing required dependencies or local model/data files.")
+def _resolve_explainer() -> tuple[Any, list[Path], str | None]:
+    missing_files = _missing_required_files()
+    if missing_files:
+        return DemoExplainer(), missing_files, None
 
-    if error_text:
-        st.code(error_text)
-
-    st.markdown("Add these files to the deployed app environment:")
-    for path in missing_files:
-        st.markdown(f"- `{path.relative_to(BASE_DIR)}`")
-
-    st.caption("The GitHub repo currently excludes large datasets and model artifacts, so deployment needs those files added separately.")
+    try:
+        return load_explainer(), [], None
+    except (ModuleNotFoundError, FileNotFoundError) as exc:
+        return DemoExplainer(), missing_files, str(exc)
 
 
 def _safe_index(options: list[str], value: str) -> int:
@@ -149,22 +266,13 @@ def _render_prediction(result: dict[str, object]) -> None:
 
 
 def main() -> None:
-    missing_files = _missing_required_files()
-    if missing_files:
-        _render_setup_message(missing_files)
-        return
-
     st.title("Transaction Risk Analysis System")
     st.caption("Use a few basic transaction details to estimate transaction risk from historical patterns.")
 
-    try:
-        explainer = load_explainer()
-    except ModuleNotFoundError as exc:
-        _render_setup_message(missing_files, error_text=str(exc))
-        return
-    except FileNotFoundError as exc:
-        _render_setup_message(missing_files, error_text=str(exc))
-        return
+    explainer, missing_files, error_text = _resolve_explainer()
+
+    if missing_files or error_text:
+        st.info("Running in fallback demo mode because local model/data artifacts are not available in this deployment.")
 
     with st.form("fraud_form"):
         st.markdown("### Check Transaction Risk")
