@@ -1,11 +1,22 @@
 from __future__ import annotations
 
 from datetime import datetime
+from pathlib import Path
+from typing import Any
 
 import pandas as pd
 import streamlit as st
 
-from src.explain import FraudExplainer
+
+BASE_DIR = Path(__file__).resolve().parent
+REQUIRED_FILES = [
+    BASE_DIR / "data" / "raw" / "fraudTrain.csv",
+    BASE_DIR / "data" / "raw" / "fraudTest.csv",
+    BASE_DIR / "data" / "processed" / "data.pkl",
+    BASE_DIR / "data" / "processed" / "scaler.pkl",
+    BASE_DIR / "models" / "random_forest.pkl",
+    BASE_DIR / "models" / "stacking_model.pkl",
+]
 
 
 st.set_page_config(
@@ -15,8 +26,28 @@ st.set_page_config(
 
 
 @st.cache_resource(show_spinner=True)
-def load_explainer() -> FraudExplainer:
+def load_explainer() -> Any:
+    from src.explain import FraudExplainer
+
     return FraudExplainer()
+
+
+def _missing_required_files() -> list[Path]:
+    return [path for path in REQUIRED_FILES if not path.exists()]
+
+
+def _render_setup_message(missing_files: list[Path], error_text: str | None = None) -> None:
+    st.title("Transaction Risk Analysis System")
+    st.error("The app is missing required dependencies or local model/data files.")
+
+    if error_text:
+        st.code(error_text)
+
+    st.markdown("Add these files to the deployed app environment:")
+    for path in missing_files:
+        st.markdown(f"- `{path.relative_to(BASE_DIR)}`")
+
+    st.caption("The GitHub repo currently excludes large datasets and model artifacts, so deployment needs those files added separately.")
 
 
 def _safe_index(options: list[str], value: str) -> int:
@@ -118,10 +149,22 @@ def _render_prediction(result: dict[str, object]) -> None:
 
 
 def main() -> None:
+    missing_files = _missing_required_files()
+    if missing_files:
+        _render_setup_message(missing_files)
+        return
+
     st.title("Transaction Risk Analysis System")
     st.caption("Use a few basic transaction details to estimate transaction risk from historical patterns.")
 
-    explainer = load_explainer()
+    try:
+        explainer = load_explainer()
+    except ModuleNotFoundError as exc:
+        _render_setup_message(missing_files, error_text=str(exc))
+        return
+    except FileNotFoundError as exc:
+        _render_setup_message(missing_files, error_text=str(exc))
+        return
 
     with st.form("fraud_form"):
         st.markdown("### Check Transaction Risk")
